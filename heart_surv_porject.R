@@ -60,7 +60,8 @@ ggplot(heart_KM, aes(x = time, y = surv) +
   theme_minimal())
   #or theme_bw(base_size = 18)
 
-
+##################################################################################
+#NOT WORKING
 #other option: use Nelson-AAlen estimator to retrieve the cumulative hazard function
 #ops, not working, giving error
 #creating a new dataset because data1 has some factorizes variables and is giving error
@@ -83,11 +84,7 @@ heart.kphaz.fit1 %>%
   geom_line() +
   xlab("Time") +
   ylab("h(t)")
-
-#maybe good to add the logrank test having as two groups patients that had transplant yes or no
-#to develop
-
-
+######################################################################################
 
 
 #PART 3 : ANALYSIS AND MODELLING
@@ -176,32 +173,197 @@ sapply(fits, AIC)
 step_AIC = step(cox_full)
 step_AIC
 
+#next step is to verify if we can have a better model using stratification
+#1st test stratification applied on surgery
+#based on concordance and likelihood ratio, respectively of 0.647 and 16.43, p=9e-04 the best model remains the cox_full
+cox_strata1 = coxph(Surv(stop, event) ~ age + year + strata(surgery) + transplant, data = data1)
+summary(cox_strata1)
 
-###NEXT STEPS
-## Split data into a training and a testing set
-## Train candidate models
-## Make predictions in the testing dataset
-## Assess predictive performance
-### 1. Check that the predictions go into the right direction
-### 2. Extract the C-statistic from the 'summary' output
-### 3. Flip directions as needed
-# Measuring predictions performance - effect size
-## Raw estimates
-## Standardized predictions
-## Discretized predictions - based on quantiles
-# Model diagnostics
+#2nd test stratification applied on transplant
+#based on concordance and likelihood ratio, respectively of 0.645 and 17.38, p=6e-04 the best model remains the cox_full
+cox_strata2 = coxph(Surv(stop, event) ~ age + year + surgery + strata(transplant), data = data1)
+summary(cox_strata2)
 
-## Martingale residuals
-## Case-deletion residuals
-### Schoenfeld residuals
-## Stratification
-#. AUC/ROC. 
+#as last test we can calculate the ROC curve
+####NOT WORKING YET THE ROC
+####################################################################
+library(survivalROC)
+library(timeROC)
+cox_ROC = coxph(Surv(stop, event) ~ age + year + surgery + transplant, data = data1)
+
+#predict survival probability
+predict_probs = predict(cox_ROC, type = "lp", se.fit = TRUE)
+
+
+#extract predicted probabilities and survival status
+time = data1$stop
+pred = predict_probs$fit
+status = data1$event
+
+#ROC curve calculation
+roc = timeROC(status = status, marker = -pred, times = time)
+######################################################################
+
+#PART 4 : PREDICTION
+#split the dataset in training and testing
+set.seed(123)
+i.training = sample.int(nrow(data1), size = floor(0.8 * nrow(data1)), replace = FALSE)
+i.testing = setdiff(seq_len(nrow(data1)), i.training)
+d_training = data1[i.training, ]
+d_testing = data1[i.testing, ]
+
+#train the model using training dataset
+cox_full_tr = coxph(Surv(stop, event) ~ age + year + surgery + transplant, data = d_training)
+cox_nested4_tr = coxph(Surv(stop, event) ~ age + year + transplant, data = d_training)
+
+#we calculate prediction on testing dataset
+#Make predictions in the testing dataset
+d_testing$lp_A = predict(cox_full_tr, newdata = d_testing, type = "lp")
+d_testing$lp_B = predict(cox_nested4_tr, newdata = d_testing, type = "lp")
+
+
+d_testing
+
+#asses predictive performance
+models = list(
+  A = coxph(Surv(stop, event) ~ lp_A, data = d_testing),
+  B = coxph(Surv(stop, event) ~ lp_B, data = d_testing)
+)
+
+summary(models$A)
+summary(models$B)
+
+#check that the predictions go into the right direction
+sapply(models, coef)
+
+#extract the C-statistic from the 'summary' output
+map_dbl(models, ~ summary(.)$concordance[1])
+
+#flip directions as needed
+#benchmark is selecting model A (that is our original cox_full)
+benchmark =
+  tibble(
+    model = names(models),
+    sign = sapply(models, coef) |> sign(),
+    C_summary = map_dbl(models, ~ summary(.)$concordance[1]),
+    C = ifelse(sign > 0, C_summary, 1 - C_summary)
+  )
+benchmark
+
+
+#measuring predictions performance - effect size
+d1 = d_testing |> select(stop, event, lp_A, lp_B)
+head(d1)
+
+#raw estimates
+A = coxph(Surv(stop, event) ~ lp_A, data = d1) |> tidy()
+B = coxph(Surv(stop, event) ~ lp_B, data = d1) |> tidy()
+bind_rows(A, B)
+
+
+#standardized predictions
+d2 = mutate(d1,
+             ZA = lp_A / sd(lp_A),
+             ZB = lp_B / sd(lp_B))
+head(d2)
+
+
+#discretized predictions - based on quantiles
+d3 =
+  mutate(d2,
+         FA = factor((lp_A > median(lp_A)), levels = c(FALSE, TRUE), labels = c("low", "high")),
+         FB = factor((lp_B > median(lp_B)), levels = c(FALSE, TRUE), labels = c("low", "high"))
+  )
+
+A = coxph(Surv(stop, event) ~ FA, data = d3) |> tidy()
+B = coxph(Surv(stop, event) ~ FB, data = d3) |> tidy()
+bind_rows(A, B) |>
+  transmute(term, estimate, HR = exp(estimate), p.value)
+
+fit.KMA = survfit(Surv(stop, event) ~ FA, data = d3)
+fit.KMA
+plot(fit.KMA, col = 1:2)
+
+fit.KMB = survfit(Surv(stop, event) ~ FB, data = d3)
+fit.KMB
+plot(fit.KMB, col = 1:2)
+
+
+#cross-validation using Lasso model
+library(glmnet)
+library(Hmisc)
+library(survAUC)
+library(pec)
+library(riskRegression)
+
+#prepare data for training dataset
+x_train = as.matrix(d_training[, c("age", "year", "surgery", "transplant")]) 
+y_train = as.matrix(Surv(d_training$stop, d_training$event))
+
+#prepare data for testing dataset
+x_test = as.matrix(d_testing[, c("age", "year", "surgery", "transplant")]) 
+y_test = as.matrix(Surv(d_testing$stop, d_testing$event))
+
+#set up cross-validation with Lasso
+cvfit = cv.glmnet(x_train, y_train, alpha = 1, family = "cox")
+
+#retrieve optimal lambda
+lambda_min = cvfit$lambda.min
+lambda_min
+
+#fit with Lasso model
+lasso_model = glmnet(x_train, y_train, alpha = 1, family = "cox", lambda = lambda_min)
+
+#predict on test set
+lasso_pred = predict(lasso_model, newx = x_test, s = lambda_min, type = "link")
+
+################################################################################
+#calculate C-index
+###NOT WORKING YET
+c_index <- survAUC::UnoC(Surv.rsp = y_test, Surv.rsp.new = y_test, lpnew = lasso_pred)
+c_index$C
+################################################################################
+
+#Log-Rank Test
+#the lasso model is statistically significant sicne p-value is very small
+surv_diff = survdiff(Surv(d_testing$stop, d_testing$event) ~ lasso_pred)
+p_value <- 1 - pchisq(surv_diff$chisq, length(surv_diff$n) - 1)
+p_value
+
+
+#the coefficients are all zero, this can happen with Lasso regression when the regularization is strong
+coef(cvfit, s = "lambda.1se")
+
+################################################################################
+# Create Calibration Plot
+###NOT WORKING YET
+pred_risk <- predictRisk(lasso_model, newdata = d_testing, times = seq(0, max(d_testing$stop), by = 1))
+
+# Prepare the data for the calibration plot
+cal_data <- data.frame(time = d_testing$stop, status = d_testing$event, pred_risk = pred_risk)
+
+# Generate the calibration plot using ggplot2
+library(ggplot2)
+ggplot(cal_data, aes(x = time, y = pred_risk)) +
+  geom_point() +
+  geom_smooth(method = "loess") +
+  labs(title = "Calibration Plot", x = "Time (days)", y = "Predicted Risk") +
+  theme_minimal()
+################################################################################
+
+##TODO: ## Martingale residuals??
+
+
+
+#PART 5 : Conclusion
+#fit.KMB might be considered better due to its higher median survival time (FB=high) compared to fit.KMA (FA=high)?
+
+
+
+
+
 
 #TO DO:
-# Stratified Cox Regression
-# Penalized Cox regression
-# cross validation (lasso, ridge, elasticnet)
-# predicting survival
 # Interpretations
 # embellishment using better plotting package and knit
 
