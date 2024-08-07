@@ -1,16 +1,13 @@
 # Survival Analysis
 
-# Heart Survival
-
 # Participants:
 # Amit Agarwal
 # Lorena Romeo
 # Nikolai Len
 # Quentin Camilleri
 
-# Data set: heart from survival package.
-# Survival of patients on the waiting list for the Stanford heart transplant 
-# program.
+# Data set:  Survival of patients on the waiting list for the Stanford heart  
+# transplant program present in the survival package.
 
 # Objective:
 # Assess the effect on survival of transplantation, treating the patient 
@@ -42,8 +39,13 @@
 # data. Biometrics 48, 507–528. Page 519.
 
 # jasa, jasa1, heart, all have 103 subjects while stanford2 has 184 subjects.
+# id and subject are the same.
 
+# stop = fu.date - accept.dt + 1 = end of followup - acceptance into program + 1
+# wait.time = tx.date - accept.dt + 1 = transplant date - acceptance into program + 1
+# (stop - start) time between the events.
 
+#------------------------------------------------------------------------------
 # Libraries seen in class or intended to be used.
 library(dplyr)
 library(tidyr)
@@ -53,16 +55,13 @@ library(lubridate)
 library(tidyverse)
 library(broom)
 library(xtable)
-library(BSDA) # to install this library run.  devtools::install_github('alanarnholt/BSDA')
-library(webr)  #.   devtools::install_github("cardiomoon/webr")
+library(BSDA)  # devtools::install_github('alanarnholt/BSDA')
+library(webr)  # devtools::install_github("cardiomoon/webr")
 library(gtsummary)
 library(modelsummary)
 library(epiDisplay)
 library(mgcv)
 library(survival)
-library(survivalROC)
-library(timeROC)
-library(survAUC)
 library(ggfortify)
 library(gridExtra)
 library(survminer) 
@@ -71,26 +70,44 @@ library(swimplot)
 library(muhaz)
 library(asaur)
 library(maxLik)
+library(survivalROC)
 library(plyr)
 library(glmnet)
 library(tidycmprsk)
 library(mstate)
 library(cmprsk)
+library(timeROC)
+library(survAUC)
 library(tidycmprsk)
+library(openxlsx)
+
 library(VSURF)
 library(Hmisc)
 library(pec)
 library(riskRegression)
 
-data1 = heart
-data2 = stanford2
-data3 = jasa
-data4 = jasa1
+#------------------------------------------------------------------------------
+# Load the datasets
+heart_data <- heart
+stanford2_data = stanford2
+jasa_data = jasa
+jasa1_data = jasa1
 
-write.csv(data1, file = "heart.csv", row.names = FALSE)
-write.csv(data2, file = "stanford2.csv", row.names = FALSE)
-write.csv(data3, file = "jasa.csv", row.names = FALSE)
-write.csv(data4, file = "jasa1.csv", row.names = FALSE)
+wb <- createWorkbook()
+addWorksheet(wb, "heart")
+writeData(wb, "heart", heart_data)
+addWorksheet(wb, "stanford2")
+writeData(wb, "stanford2", stanford2_data)
+addWorksheet(wb, "jasa")
+writeData(wb, "jasa", jasa_data)
+addWorksheet(wb, "jasa1")
+writeData(wb, "jasa1", jasa1_data)
+saveWorkbook(wb, "surviving_heart_transplant.xlsx", overwrite = TRUE)
+
+write.csv(heart_data, file = "heart.csv", row.names = FALSE)
+write.csv(stanford2_data, file = "stanford2.csv", row.names = FALSE)
+write.csv(jasa_data, file = "jasa.csv", row.names = FALSE)
+write.csv(jasa1_data, file = "jasa1.csv", row.names = FALSE)
 
 data(heart,package="survival")
 ?heart
@@ -112,6 +129,372 @@ summary(jasa)
 str(jasa1)
 head(jasa1)
 summary(jasa1)
+#------------------------------------------------------------------------------
+# Check for missing values
+missing_values <- heart_data %>% summarise_all(~sum(is.na(.)))
+print(missing_values) # No missing values
+
+# Add actual age from jasa data set
+heart_data <- heart_data %>%
+  left_join(jasa1_data, by = "id") %>%
+  mutate(actual_age = age)
+
+# Age groups
+heart_data$age_group <- cut(heart_data$age, breaks = seq(0, 100, 10),
+                        labels = c("0-10", "10-20", "20-30", "30-40", "40-50",
+                                "50-60", "60-70", "70-80", "80-90", "90-100"))
+
+# Descriptive statistics
+summary(heart_data)
+
+# Create survival object
+surv_object <- Surv(time = heart_data$stop, event = heart_data$event)
+
+# Check for censoring in the dataset
+heart_data$censored <- ifelse(heart_data$event == 0, TRUE, FALSE)
+print(table(heart_data$censored))
+data_uncensored <- heart_data %>% filter(event == 1)
+
+# 75 observations are not censored, i.e. death has occurred.
+# 97 observations are censored, i.e. the event has not occurred by the end of 
+# the study period.
+
+#------------------------------------------------------------------------------
+# Kaplan-Meier estimator
+km_fit <- survfit(surv_object ~ 1, data = heart_data)
+
+# Plot Kaplan-Meier survival curve with censoring
+ggsurvplot(km_fit, conf.int = TRUE, 
+           ggtheme = theme_minimal(), 
+           title = "Kaplan-Meier Survival Curve with Censoring", 
+           censor.shape = '|', 
+           censor.size = 4)
+
+# Estimating x-year survival (surviving beyond a certain number of years)
+x_year_survival <- summary(km_fit, times = 365.25 * 5)  # 5-year survival
+print(paste("x-year survival: ", x_year_survival))
+      
+# Estimating median survival time
+median_survival_time <- summary(km_fit)$table["median"]
+print(paste("Median Survival Time: ", median_survival_time))
+
+# Hazard function
+ggsurvplot(km_fit, fun = "cloglog",
+           ggtheme = theme_minimal(),
+           title = "Complementary Log-Log Transformation")
+
+# Cumulative Hazard function
+ggsurvplot(km_fit, fun = "cumhaz",
+           ggtheme = theme_minimal(),
+           title = "Cumulative Hazard Function")
+
+#------------------------------------------------------------------------------
+# Kaplan-Meier estimator stratified by transplant status
+km_fit_transplant <- survfit(surv_object ~ transplant, data = heart_data)
+
+# Plot Kaplan-Meier survival curve with censoring by transplant status
+ggsurvplot(km_fit_transplant, conf.int = TRUE,
+           ggtheme = theme_minimal(),
+           title = "Survival Curve by Transplant Status with Censoring", 
+           censor.shape = '|', censor.size = 4)
+
+# Estimating x-year survival (surviving beyond a certain number of years)
+x_year_survival <- summary(km_fit_transplant, times = 365.25 * 5)  # 5-year survival
+print(paste("x-year survival: ", x_year_survival))
+      
+# Estimating median survival time
+median_survival_time <- summary(km_fit_transplant)$table["median"]
+print(paste("Median Survival Time: ", median_survival_time))
+
+# Hazard function
+ggsurvplot(km_fit_transplant, fun = "cloglog",
+           ggtheme = theme_minimal(),
+           title = "Complementary Log-Log Transformation")
+
+# Cumulative Hazard function
+ggsurvplot(km_fit_transplant, fun = "cumhaz",
+           ggtheme = theme_minimal(),
+           title = "Cumulative Hazard Function")
+
+#------------------------------------------------------------------------------
+# Kaplan-Meier estimator stratified by surgery status
+km_fit_surgery <- survfit(surv_object ~ surgery, data = heart_data)
+
+# Plot Kaplan-Meier survival curve with censoring by surgery status
+ggsurvplot(km_fit_surgery, conf.int = TRUE,
+           ggtheme = theme_minimal(), 
+           title = "Survival Curve by Surgery Status with Censoring",
+           censor.shape = '|', censor.size = 4)
+
+# Estimating x-year survival (surviving beyond a certain number of years)
+x_year_survival <- summary(km_fit_surgery, times = 365.25 * 5)  # 5-year survival
+print(paste("x-year survival: ", x_year_survival))
+      
+# Estimating median survival time
+median_survival_time <- summary(km_fit_surgery)$table["median"]
+print(paste("Median Survival Time: ", median_survival_time))
+
+# Hazard function
+ggsurvplot(km_fit_surgery, fun = "cloglog",
+           ggtheme = theme_minimal(),
+           title = "Complementary Log-Log Transformation")
+
+# Cumulative Hazard function
+ggsurvplot(km_fit_surgery, fun = "cumhaz",
+           ggtheme = theme_minimal(),
+           title = "Cumulative Hazard Function")
+
+#------------------------------------------------------------------------------
+# Kaplan-Meier estimator stratified by age groups
+km_fit_age <- survfit(surv_object ~ age_group, data = heart_data)
+
+# Plot Kaplan-Meier survival curve with censoring by age status
+ggsurvplot(km_fit_age, conf.int = TRUE, 
+           ggtheme = theme_minimal(), 
+           title = "Survival Curve by Age Groups with Censoring",
+           censor.shape = '|', censor.size = 4)
+
+# Estimating x-year survival (surviving beyond a certain number of years)
+x_year_survival <- summary(km_fit_age, times = 365.25 * 5)  # 5-year survival
+print(paste("x-year survival: ", x_year_survival))
+      
+# Estimating median survival time
+median_survival_time <- summary(km_fit_age)$table["median"]
+print(paste("Median Survival Time: ", median_survival_time))
+
+# Hazard function
+ggsurvplot(km_fit_age, fun = "cloglog",
+           ggtheme = theme_minimal(),
+           title = "Complementary Log-Log Transformation")
+
+# Cumulative Hazard function
+ggsurvplot(km_fit_age, fun = "cumhaz",
+           ggtheme = theme_minimal(),
+           title = "Cumulative Hazard Function")
+
+#------------------------------------------------------------------------------
+# Cumulative hazard function using Nelson-Aalen estimator
+na_fit <- survfit(Surv(stop, event) ~ 1, data = heart_data,
+                  type = "fleming-harrington")
+
+# Plot cumulative hazard function using Nelson-Aalen estimator
+ggsurvplot(na_fit, conf.int = TRUE,
+           ggtheme = theme_minimal(),
+           title = "Nelson-Aalen Cumulative Hazard Curve", fun = "cumhaz")
+
+# Estimating x-year survival (surviving beyond a certain number of years)
+x_year_survival <- summary(na_fit, times = 365.25 * 5)  # 5-year survival
+print(paste("x-year survival: ", x_year_survival))
+      
+# Estimating median survival time
+median_survival_time <- summary(na_fit)$table["median"]
+print(paste("Median Survival Time: ", median_survival_time))
+
+# Hazard function
+ggsurvplot(na_fit, fun = "cloglog",
+           ggtheme = theme_minimal(),
+           title = "Complementary Log-Log Transformation")
+
+# Cumulative Hazard function
+ggsurvplot(na_fit, fun = "cumhaz",
+           ggtheme = theme_minimal(),
+           title = "Cumulative Hazard Function")
+
+#------------------------------------------------------------------------------
+# Cumulative hazard function using Nelson-Aalen estimator by transplant status
+na_fit_transplant <- survfit(Surv(stop, event) ~ transplant,
+                             data = heart_data, type = "fleming-harrington")
+
+# Plot cumulative hazard function using Nelson-Aalen estimator by transplant status
+ggsurvplot(na_fit_transplant, conf.int = TRUE,
+           ggtheme = theme_minimal(),
+           title = "Nelson-Aalen Cumulative Hazard Curve by Transplant Status",
+           fun = "cumhaz")
+
+# Estimating x-year survival (surviving beyond a certain number of years)
+x_year_survival <- summary(na_fit_transplant, times = 365.25 * 5)  # 5-year survival
+print(paste("x-year survival: ", x_year_survival))
+            
+# Estimating median survival time
+median_survival_time <- summary(na_fit_transplant)$table["median"]
+print(paste("Median Survival Time: ", median_survival_time))
+
+# Hazard function
+ggsurvplot(na_fit_transplant, fun = "cloglog",
+           ggtheme = theme_minimal(),
+           title = "Complementary Log-Log Transformation")
+
+# Cumulative Hazard function
+ggsurvplot(na_fit_transplant, fun = "cumhaz",
+           ggtheme = theme_minimal(),
+           title = "Cumulative Hazard Function")
+
+#------------------------------------------------------------------------------
+# Cumulative hazard function using Nelson-Aalen estimator by surgery status
+na_fit_surgery <- survfit(Surv(stop, event) ~ surgery, 
+                          data = heart_data, 
+                          type = "fleming-harrington")
+
+# Plot cumulative hazard function using Nelson-Aalen estimator by surgery Status
+ggsurvplot(na_fit_surgery, conf.int = TRUE,
+           ggtheme = theme_minimal(),
+           title = "Nelson-Aalen Cumulative Hazard Curve by Surgery Status", 
+           fun = "cumhaz")
+            
+# Estimating x-year survival (surviving beyond a certain number of years)
+x_year_survival <- summary(na_fit_surgery, times = 365.25 * 5)  # 5-year survival
+print(paste("x-year survival: ", x_year_survival))
+      
+# Estimating median survival time
+median_survival_time <- summary(na_fit_surgery)$table["median"]
+print(paste("Median Survival Time: ", median_survival_time))
+
+# Hazard function
+ggsurvplot(na_fit_surgery, fun = "cloglog",
+           ggtheme = theme_minimal(),
+           title = "Complementary Log-Log Transformation")
+
+# Cumulative Hazard function
+ggsurvplot(na_fit_surgery, fun = "cumhaz",
+           ggtheme = theme_minimal(), 
+           title = "Cumulative Hazard Function")
+
+#------------------------------------------------------------------------------
+# Cumulative hazard function using Nelson-Aalen estimator by age status
+na_fit_age <- survfit(Surv(stop, event) ~ age_group, data = heart_data, type = "fleming-harrington")
+# Plot cumulative hazard function using Nelson-Aalen estimator by age status
+ggsurvplot(na_fit_age, conf.int = TRUE,
+           ggtheme = theme_minimal(),
+           title = "Nelson-Aalen Cumulative Hazard Curve by Age Groups", 
+           fun = "cumhaz")
+      
+# Estimating x-year survival (surviving beyond a certain number of years)
+x_year_survival <- summary(na_fit_age, times = 365.25 * 5)  # 5-year survival
+print(paste("x-year survival: ", x_year_survival))
+      
+# Estimating median survival time
+median_survival_time <- summary(na_fit_age)$table["median"]
+print(paste("Median Survival Time: ", median_survival_time))
+
+# Hazard function
+ggsurvplot(na_fit_age, fun = "cloglog",
+           ggtheme = theme_minimal(),
+           title = "Complementary Log-Log Transformation")
+      
+# Cumulative Hazard function
+ggsurvplot(na_fit_age, fun = "cumhaz",
+           ggtheme = theme_minimal(),
+           title = "Cumulative Hazard Function")
+            
+#------------------------------------------------------------------------------
+# Comparing survival times between groups
+# Log-rank tests for different groups
+
+# Stratified log-rank test
+stratified_logrank <- survdiff(surv_object ~ transplant + strata(surgery), 
+                               data = heart_data)
+print(paste("Log-rank test for transplant + surgery : ", stratified_logrank))
+      
+# Log-rank test for Transplant vs. no transplant
+logrank_test_transplant <- survdiff(surv_object ~ transplant, 
+                                    data = heart_data)
+print(paste("Log-rank test for transplant: ", logrank_test_transplant))
+      
+# Log-rank test for Surgery vs. no surgery
+logrank_test_surgery <- survdiff(surv_object ~ surgery, 
+                                 data = heart_data)
+print(paste("Log-rank test for surgery: ",logrank_test_surgery))
+            
+# Log-rank test for Age groups
+logrank_test_age <- survdiff(surv_object ~ age_group,
+                             data = heart_data)
+print(paste("Log-rank test for age groups: ",logrank_test_age))
+
+#------------------------------------------------------------------------------
+# Testing Proportional Hazards Assumption using Cox Proportional Hazards Model
+cox_model <- coxph(surv_object ~ age + year + surgery + transplant, data = heart_data)
+summary(cox_model)
+cox.zph(cox_model)
+ggcoxzph(cox.zph(cox_model))
+ggforest(cox_model, data = heart_data)
+
+# Testing Influential Observations
+ggcoxdiagnostics(cox_model, type = "dfbeta",
+                 linear.predictions = FALSE, ggtheme = theme_bw())
+
+# Testing Non-Linearity
+martingale_residuals <- residuals(cox_model, type = "martingale")
+ggplot(heart_data, aes(x = age, y = martingale_residuals)) +
+  geom_point() +
+  geom_smooth() +
+  labs(title = "Martingale Residuals vs Age",
+       x = "Age", y = "Martingale Residuals")
+
+# Evaluate model fit with residuals
+
+# Martingale residuals
+martingale_residuals <- residuals(cox_model, type = "martingale")
+plot(heart_data$age, martingale_residuals, 
+     main = "Martingale Residuals vs Age", 
+     xlab = "Age", 
+     ylab = "Martingale Residuals")
+abline(h = 0, col = "red")
+
+# Cox-Snell residuals
+cox_snell_residuals <- heart_data$event - martingale_residuals
+plot(cox_snell_residuals, 
+     main = "Cox-Snell Residuals", 
+     xlab = "Index", 
+     ylab = "Cox-Snell Residuals")
+abline(h = 0, col = "red")
+
+# Deviance residuals
+deviance_residuals <- residuals(cox_model, type = "deviance")
+plot(deviance_residuals, 
+     main = "Deviance Residuals", 
+     xlab = "Index", 
+     ylab = "Deviance Residuals")
+abline(h = 0, col = "red")
+                                          
+# Schoenfeld residuals
+schoenfeld_residuals <- residuals(cox_model, type = "schoenfeld")
+plot(schoenfeld_residuals, 
+     main = "Schoenfeld Residuals", 
+     xlab = "Index", 
+     ylab = "Schoenfeld Residuals")
+abline(h = 0, col = "red")
+      
+# Summary of Results
+summary_table <- tbl_regression(cox_model)
+summary_table
+
+#------------------------------------------------------------------------------
+# Fit survival models
+# Weibull model
+weibull_fit <- survreg(surv_object ~ age + year + surgery + transplant,
+                       data = heart_data, dist = "weibull")
+summary(weibull_fit)
+
+# Exponential distribution
+exp_fit <- survreg(surv_object ~ age + year + surgery + transplant,
+                   data = heart_data, dist = "exponential")
+summary(exp_fit)
+
+# Log-logistic model
+loglog_fit <- survreg(surv_object ~ age + year + surgery + transplant,
+                      data = heart_data, dist = "loglogistic")
+summary(loglog_fit)
+
+# Binary Logistic Regression
+logistic_model <- glm(transplant ~ age + year + surgery, 
+                      data = heart_data, family = binomial)
+summary(logistic_model)
+exp(coef(logistic_model))
+                                                      
+#------------------------------------------------------------------------------
+
+
+
 
 # Predictions
 fit <- survreg(Surv(time,status) ~ age + I(age^2), data=stanford2, 
@@ -252,77 +635,4 @@ coxph(Surv(tstart, tstop, death) ~ age*trt + surgery + year,
 # leading edge of the first follow-up interval for the subject.
 # The other 67 transplants were strictly within the (0, last follow up) interval
 # of each subject.
-
-
-# 1.1. Survival Analysis
-
-
-# Calculating survival times
-
-
-# Creating survival objects and curves
-
-
-
-# Estimating x-year survival (surviving beyond a certain number of years)
-
-
-
-# stimating median survival time
-
-
-# Comparing survival times between groups
-
-
-# 1.2. Hazard and Cumulative Hazard
-
-
-
-# 1.3. Survival Function
-
-
-
-# 1.4. Survival curves
-
-
-
-# Surv()
-
-
-# survfit()
-
-
-# ggsurvplot()
-
-
-# 1.5. Kaplan-Meier Curve
-
-
-
-# 1.6. Censoring
-
-
-
-# 1.7. Testing Proportional Hazards Assumption
-
-
-
-# 1.8. Testing Influential Observations
-
-
-
-# 1.9. Testing Non-Linearity
-
-
-
-# 1.10. Cox Proportional Hazards Model
-
-
-# log-rank tests
-
-
-# 1.11. Parametric Survival Models
-
-
-# 1.12. Binary Logistic Regression
 
