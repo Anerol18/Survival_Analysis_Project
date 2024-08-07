@@ -29,17 +29,20 @@
 # jasa1 with 170 observations containing the following variables:
 # id, start, stop, event, transplant, age, year, surgery
 
-# 2. heart (the main data set) with 184 observations with the following 
+# 2. heart (the main data set) with 172 observations with the following 
 # variables:
 # start, stop, event, age, year, surgery, transplant, id
 # J Crowley and M Hu (1977), Covariance analysis of heart transplant survival data. Journal of the
 # American Statistical Association, 72, 27–36.
 
-# 3. stanford2 (Stanford Heart Transplant data in a different format) with 172 
+# 3. stanford2 (Stanford Heart Transplant data in a different format) with184
 # observations with the following variables:
 # id, time, status, age, t5
 # LA Escobar and WQ Meeker Jr (1992), Assessing influence in regression analysis with censored
 # data. Biometrics 48, 507–528. Page 519.
+
+# jasa, jasa1, heart, all have 103 subjects while stanford2 has 184 subjects.
+
 
 # Libraries seen in class or intended to be used.
 library(dplyr)
@@ -79,7 +82,15 @@ library(Hmisc)
 library(pec)
 library(riskRegression)
 
+data1 = heart
+data2 = stanford2
+data3 = jasa
+data4 = jasa1
 
+write.csv(data1, file = "heart.csv", row.names = FALSE)
+write.csv(data2, file = "stanford2.csv", row.names = FALSE)
+write.csv(data3, file = "jasa.csv", row.names = FALSE)
+write.csv(data4, file = "jasa1.csv", row.names = FALSE)
 
 data(heart,package="survival")
 ?heart
@@ -243,22 +254,75 @@ coxph(Surv(tstart, tstop, death) ~ age*trt + surgery + year,
 # of each subject.
 
 
+# 1.1. Survival Analysis
+
+
+# Calculating survival times
+
+
+# Creating survival objects and curves
 
 
 
+# Estimating x-year survival (surviving beyond a certain number of years)
 
 
 
+# stimating median survival time
+
+
+# Comparing survival times between groups
+
+
+# 1.2. Hazard and Cumulative Hazard
 
 
 
+# 1.3. Survival Function
 
 
 
+# 1.4. Survival curves
 
 
 
+# Surv()
+
+
+# survfit()
+
+
+# ggsurvplot()
+
+
+# 1.5. Kaplan-Meier Curve
 
 
 
+# 1.6. Censoring
+
+
+
+# 1.7. Testing Proportional Hazards Assumption
+
+
+
+# 1.8. Testing Influential Observations
+
+
+
+# 1.9. Testing Non-Linearity
+
+
+
+# 1.10. Cox Proportional Hazards Model
+
+
+# log-rank tests
+
+
+# 1.11. Parametric Survival Models
+
+
+# 1.12. Binary Logistic Regression
 
