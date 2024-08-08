@@ -41,6 +41,10 @@
 # jasa, jasa1, heart, all have 103 subjects while stanford2 has 184 subjects.
 # id and subject are the same.
 
+# actual_age = accept.dt - birth.dt
+# futime = fu.date - accept.dt
+# wait.time = tx.date - accept.dt
+
 # stop = fu.date - accept.dt + 1 = end of followup - acceptance into program + 1
 # wait.time = tx.date - accept.dt + 1 = transplant date - acceptance into program + 1
 # (stop - start) time between the events.
@@ -92,23 +96,7 @@ heart_data <- heart
 stanford2_data = stanford2
 jasa_data = jasa
 jasa1_data = jasa1
-
-wb <- createWorkbook()
-addWorksheet(wb, "heart")
-writeData(wb, "heart", heart_data)
-addWorksheet(wb, "stanford2")
-writeData(wb, "stanford2", stanford2_data)
-addWorksheet(wb, "jasa")
-writeData(wb, "jasa", jasa_data)
-addWorksheet(wb, "jasa1")
-writeData(wb, "jasa1", jasa1_data)
-saveWorkbook(wb, "surviving_heart_transplant.xlsx", overwrite = TRUE)
-
-write.csv(heart_data, file = "heart.csv", row.names = FALSE)
-write.csv(stanford2_data, file = "stanford2.csv", row.names = FALSE)
-write.csv(jasa_data, file = "jasa.csv", row.names = FALSE)
-write.csv(jasa1_data, file = "jasa1.csv", row.names = FALSE)
-
+#------------------------------------------------------------------------------
 data(heart,package="survival")
 ?heart
 str(heart)
@@ -134,19 +122,52 @@ summary(jasa1)
 missing_values <- heart_data %>% summarise_all(~sum(is.na(.)))
 print(missing_values) # No missing values
 
-# Add actual age from jasa data set
+# Add jasa columns to heart_data
 heart_data <- heart_data %>%
-  left_join(jasa1_data, by = "id") %>%
-  mutate(actual_age = age)
+  mutate(
+    actual_age = jasa_data$age[match(id, 1:nrow(jasa_data))],
+    accept_dt = jasa_data$accept.dt[match(id, 1:nrow(jasa_data))],
+    tx_date = jasa_data$tx.date[match(id, 1:nrow(jasa_data))],
+    fu_date = jasa_data$fu.date[match(id, 1:nrow(jasa_data))],
+    reject  = jasa_data$reject[match(id, 1:nrow(jasa_data))],
+    fustat = jasa_data$fustat[match(id, 1:nrow(jasa_data))]
+  )
+
+# Convert reject and fustat to factors
+heart_data <- heart_data %>%
+  mutate(
+    reject = as.factor(reject),
+    fustat = as.factor(fustat)
+  )
 
 # Age groups
-heart_data$age_group <- cut(heart_data$age, breaks = seq(0, 100, 10),
+heart_data$age_group <- cut(heart_data$actual_age, breaks = seq(0, 80, 10),
                         labels = c("0-10", "10-20", "20-30", "30-40", "40-50",
-                                "50-60", "60-70", "70-80", "80-90", "90-100"))
+                                "50-60", "60-70", "70-80"))
 
+str(heart_data)
 # Descriptive statistics
 summary(heart_data)
 
+#------------------------------------------------------------------------------
+
+wb <- createWorkbook()
+addWorksheet(wb, "heart")
+writeData(wb, "heart", heart_data)
+addWorksheet(wb, "stanford2")
+writeData(wb, "stanford2", stanford2_data)
+addWorksheet(wb, "jasa")
+writeData(wb, "jasa", jasa_data)
+addWorksheet(wb, "jasa1")
+writeData(wb, "jasa1", jasa1_data)
+saveWorkbook(wb, "surviving_heart_transplant.xlsx", overwrite = TRUE)
+
+write.csv(heart_data, file = "heart.csv", row.names = FALSE)
+write.csv(stanford2_data, file = "stanford2.csv", row.names = FALSE)
+write.csv(jasa_data, file = "jasa.csv", row.names = FALSE)
+write.csv(jasa1_data, file = "jasa1.csv", row.names = FALSE)
+
+#------------------------------------------------------------------------------
 # Create survival object
 surv_object <- Surv(time = heart_data$stop, event = heart_data$event)
 
