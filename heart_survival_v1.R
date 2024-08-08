@@ -169,7 +169,8 @@ write.csv(jasa1_data, file = "jasa1.csv", row.names = FALSE)
 
 #------------------------------------------------------------------------------
 # Create survival object
-surv_object <- Surv(time = heart_data$stop, event = heart_data$event)
+# surv_object <- Surv(time = heart_data$stop, event = heart_data$event)
+surv_object <- Surv(time = heart_data$stop, event = heart_data$fustat)
 
 # Check for censoring in the dataset
 heart_data$censored <- ifelse(heart_data$event == 0, TRUE, FALSE)
