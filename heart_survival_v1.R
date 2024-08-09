@@ -181,7 +181,6 @@ surv_object <- Surv(time = heart_data$stop, event = heart_data$event)
 heart_data$censored <- ifelse(heart_data$event == 0, TRUE, FALSE)
 print(table(heart_data$censored))
 data_uncensored <- heart_data %>% filter(event == 1)
-data_uncensored
 
 # 75 observations are not censored, i.e. death has occurred.
 # 97 observations are censored, i.e. the event has not occurred by the end of 
@@ -208,9 +207,23 @@ ggplot(heart_data, aes(x = 0, xend = duration, y = id, yend = id)) +
   theme_minimal()
 
 #------------------------------------------------------------------------------
+# The summary of fitted models provide the following information:
+# time
+# n.risk: number of subjects still under observation and at risk
+# n.event: number of events (that occurred at each specific point in time
+# survival: probability of surviving beyond a given time point.
+# std.err: uncertainty in the survival estimate at each point in time
+# lower 95% CI: lower 95% confidence intervals for the survival estimates
+# upper 95% CI: upper 95% confidence intervals for the survival estimates
+#------------------------------------------------------------------------------
 # Kaplan-Meier estimator
 # fitdata <- 
 km_fit <- survfit(surv_object ~ 1, data = heart_data)
+summary(km_fit)
+
+# Over time, the probability of survival decreases.
+# By 1387 (~3.8 years), only 18.1% of the individuals are expected to survive 
+# beyond this.
 
 # Plot Kaplan-Meier survival curve with censoring
 ggsurvplot(km_fit, conf.int = TRUE, 
@@ -222,7 +235,7 @@ ggsurvplot(km_fit, conf.int = TRUE,
 # Estimating x-year survival (surviving beyond a certain number of years)
 x_year_survival <- summary(km_fit, times = 365.25 * 5)  # 5-year survival
 print(paste("x-year survival: ", x_year_survival))
-      
+
 # Estimating median survival time
 median_survival_time <- summary(km_fit)$table["median"]
 print(paste("Median Survival Time: ", median_survival_time))
@@ -240,6 +253,13 @@ ggsurvplot(km_fit, fun = "cumhaz",
 #------------------------------------------------------------------------------
 # Kaplan-Meier estimator stratified by transplant status
 km_fit_transplant <- survfit(surv_object ~ transplant, data = heart_data)
+summary(km_fit_transplant)
+
+# Over time, the probability of survival decreases.
+# By 1387 (~3.8 years), only 19% of the individuals who had a transplant are 
+# expected to survive  beyond this.
+# Less than 23.6% of subjects who didnt have a transplant will survive over a 
+# year.
 
 # Plot Kaplan-Meier survival curve with censoring by transplant status
 ggsurvplot(km_fit_transplant, conf.int = TRUE,
@@ -268,6 +288,12 @@ ggsurvplot(km_fit_transplant, fun = "cumhaz",
 #------------------------------------------------------------------------------
 # Kaplan-Meier estimator stratified by surgery status
 km_fit_surgery <- survfit(surv_object ~ surgery, data = heart_data)
+summary(km_fit_surgery)
+
+# Over time, the probability of survival decreases.
+# By 1387 (~3.8 years), only 15.5% of the individuals are expected to survive 
+# beyond this who didnt have surgery and 34% are expected to survive beyond 
+# 2.72 years among those who had a surgery.
 
 # Plot Kaplan-Meier survival curve with censoring by surgery status
 ggsurvplot(km_fit_surgery, conf.int = TRUE,
@@ -296,6 +322,11 @@ ggsurvplot(km_fit_surgery, fun = "cumhaz",
 #------------------------------------------------------------------------------
 # Kaplan-Meier estimator stratified by age groups
 km_fit_age <- survfit(surv_object ~ age_group, data = heart_data)
+
+summary(km_fit_age)
+
+# Over time, the probability of survival decreases.
+# See results for breakdown by age groups
 
 # Plot Kaplan-Meier survival curve with censoring by age status
 ggsurvplot(km_fit_age, conf.int = TRUE, 
@@ -326,6 +357,12 @@ ggsurvplot(km_fit_age, fun = "cumhaz",
 na_fit <- survfit(Surv(stop, event) ~ 1, data = heart_data,
                   type = "fleming-harrington")
 
+summary(na_fit)
+
+# Over time, the probability of survival decreases.
+# By 1387 (~3.8 years), only 19.1% of the individuals are expected to survive 
+# beyond this.
+
 # Plot cumulative hazard function using Nelson-Aalen estimator
 ggsurvplot(na_fit, conf.int = TRUE,
            ggtheme = theme_minimal(),
@@ -353,6 +390,14 @@ ggsurvplot(na_fit, fun = "cumhaz",
 # Cumulative hazard function using Nelson-Aalen estimator by transplant status
 na_fit_transplant <- survfit(Surv(stop, event) ~ transplant,
                              data = heart_data, type = "fleming-harrington")
+
+summary(na_fit_transplant)
+
+# Over time, the probability of survival decreases.
+# 26.7% of the subjects who didnt have a transplant are expected to survive 
+# beyond a year.
+# 20.2% are expected to survive beyond 1387 (~3.8 years) among those who had 
+# a transplant.
 
 # Plot cumulative hazard function using Nelson-Aalen estimator by transplant status
 ggsurvplot(na_fit_transplant, conf.int = TRUE,
@@ -384,6 +429,14 @@ na_fit_surgery <- survfit(Surv(stop, event) ~ surgery,
                           data = heart_data, 
                           type = "fleming-harrington")
 
+summary(na_fit_surgery)
+
+# Over time, the probability of survival decreases.
+# 16.7% are expected to survive beyond 1387 (~3.8 years) among those who did 
+# not have a surgery.
+# Less than 37.2% of the subjects who had a surgery might survive for over a 
+# year.
+
 # Plot cumulative hazard function using Nelson-Aalen estimator by surgery Status
 ggsurvplot(na_fit_surgery, conf.int = TRUE,
            ggtheme = theme_minimal(),
@@ -410,13 +463,19 @@ ggsurvplot(na_fit_surgery, fun = "cumhaz",
 
 #------------------------------------------------------------------------------
 # Cumulative hazard function using Nelson-Aalen estimator by age status
-na_fit_age <- survfit(Surv(stop, event) ~ age_group, data = heart_data, type = "fleming-harrington")
+na_fit_age <- survfit(Surv(stop, event) ~ age_group, 
+                      data = heart_data, type = "fleming-harrington")
+
+summary(na_fit_age)
+# Over time, the probability of survival decreases.
+# See results for breakdown by age groups
+
 # Plot cumulative hazard function using Nelson-Aalen estimator by age status
 ggsurvplot(na_fit_age, conf.int = TRUE,
            ggtheme = theme_minimal(),
            title = "Nelson-Aalen Cumulative Hazard Curve by Age Groups", 
            fun = "cumhaz")
-      
+
 # Estimating x-year survival (surviving beyond a certain number of years)
 x_year_survival <- summary(na_fit_age, times = 365.25 * 5)  # 5-year survival
 print(paste("x-year survival: ", x_year_survival))
@@ -443,6 +502,15 @@ ggsurvplot(na_fit_age, fun = "cumhaz",
 stratified_logrank <- survdiff(surv_object ~ transplant + strata(surgery), 
                                data = heart_data)
 print(paste("Log-rank test for transplant + surgery : ", stratified_logrank))
+
+
+surv_obj_jasa <- Surv(time = jasa_data$futime, event = jasa_data$fustat)
+stratified_logrank <- survdiff(surv_obj_jasa ~ transplant + strata(surgery), 
+                               data = jasa_data)
+print(paste("Log-rank test for transplant + surgery : ", stratified_logrank))
+
+# issue here since it takes 103 subjects as without transplant and 69 subjects
+# with transplant. Very different results with jasa: same for below
       
 # Log-rank test for Transplant vs. no transplant
 logrank_test_transplant <- survdiff(surv_object ~ transplant, 
@@ -461,8 +529,16 @@ print(paste("Log-rank test for age groups: ",logrank_test_age))
 
 #------------------------------------------------------------------------------
 # Testing Proportional Hazards Assumption using Cox Proportional Hazards Model
-cox_model <- coxph(surv_object ~ age + year + surgery + transplant, data = heart_data)
+cox_model <- coxph(surv_object ~ age + year + surgery + transplant, 
+                   data = heart_data)
 summary(cox_model)
+
+# cox_model <- coxph(surv_object ~ actual_age + year + surgery + transplant, 
+#                    data = heart_data)
+# No difference in results if actual_age is used instead of age.
+
+# ToDO: explain results
+
 cox.zph(cox_model)
 ggcoxzph(cox.zph(cox_model))
 ggforest(cox_model, data = heart_data)
@@ -817,3 +893,4 @@ coxph(Surv(tstart, tstop, death) ~ age*trt + surgery + year,
 # leading edge of the first follow-up interval for the subject.
 # The other 67 transplants were strictly within the (0, last follow up) interval
 # of each subject.
+
