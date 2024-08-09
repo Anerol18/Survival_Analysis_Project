@@ -89,6 +89,8 @@ library(VSURF)
 library(Hmisc)
 library(pec)
 library(riskRegression)
+library(car)
+
 
 #------------------------------------------------------------------------------
 # Load the datasets
@@ -133,24 +135,28 @@ heart_data <- heart_data %>%
     fustat = jasa_data$fustat[match(id, 1:nrow(jasa_data))]
   )
 
-# Convert reject and fustat to factors
+# Duration in years
 heart_data <- heart_data %>%
-  mutate(
-    reject = as.factor(reject),
-    fustat = as.factor(fustat)
-  )
+  mutate(duration = (stop - start)/365.25)
+
+# Convert reject and fustat to factors
+# heart_data <- heart_data %>%
+#   mutate(
+#     reject = as.factor(reject),
+#     fustat = as.factor(fustat)
+#   )
 
 # Age groups
 heart_data$age_group <- cut(heart_data$actual_age, breaks = seq(0, 80, 10),
                         labels = c("0-10", "10-20", "20-30", "30-40", "40-50",
                                 "50-60", "60-70", "70-80"))
 
-str(heart_data)
 # Descriptive statistics
 summary(heart_data)
 
-#------------------------------------------------------------------------------
+str(heart_data)
 
+#------------------------------------------------------------------------------
 wb <- createWorkbook()
 addWorksheet(wb, "heart")
 writeData(wb, "heart", heart_data)
@@ -166,23 +172,44 @@ write.csv(heart_data, file = "heart.csv", row.names = FALSE)
 write.csv(stanford2_data, file = "stanford2.csv", row.names = FALSE)
 write.csv(jasa_data, file = "jasa.csv", row.names = FALSE)
 write.csv(jasa1_data, file = "jasa1.csv", row.names = FALSE)
-
 #------------------------------------------------------------------------------
 # Create survival object
 # surv_object <- Surv(time = heart_data$stop, event = heart_data$event)
-surv_object <- Surv(time = heart_data$stop, event = heart_data$fustat)
+surv_object <- Surv(time = heart_data$stop, event = heart_data$event)
 
 # Check for censoring in the dataset
 heart_data$censored <- ifelse(heart_data$event == 0, TRUE, FALSE)
 print(table(heart_data$censored))
 data_uncensored <- heart_data %>% filter(event == 1)
+data_uncensored
 
 # 75 observations are not censored, i.e. death has occurred.
 # 97 observations are censored, i.e. the event has not occurred by the end of 
 # the study period.
 
+# Accrual and Follow-up Plot
+ggplot(heart_data, aes(x = start, xend = stop, y = id, yend = id)) +
+  geom_segment(size = 1) +
+  geom_point(aes(x = start), size = 3) +
+  geom_point(aes(x = stop, shape = factor(event)), linewidth = 3) +
+  scale_shape_manual(values = c(16, 21)) +  # Filled circle for censored, open circle for event
+  labs(x = "Year of entry - calendar time", y = "", 
+       title = "Accrual and Follow-up", shape = "Censored") +
+  theme_minimal()
+
+# Survival Time Plot
+ggplot(heart_data, aes(x = 0, xend = duration, y = id, yend = id)) +
+  geom_segment(size = 1) +
+  geom_point(aes(x = 0), size = 3) +
+  geom_point(aes(x = duration, shape = factor(event)), size = 3) +
+  scale_shape_manual(values = c(16, 4)) +  # Filled circle for censored, X for event
+  labs(x = "Survival time in years - patient time", y = "", 
+       title = "Survival Time") +
+  theme_minimal()
+
 #------------------------------------------------------------------------------
 # Kaplan-Meier estimator
+# fitdata <- 
 km_fit <- survfit(surv_object ~ 1, data = heart_data)
 
 # Plot Kaplan-Meier survival curve with censoring
@@ -200,7 +227,7 @@ print(paste("x-year survival: ", x_year_survival))
 median_survival_time <- summary(km_fit)$table["median"]
 print(paste("Median Survival Time: ", median_survival_time))
 
-# Hazard function
+# Hazard function with complementary log-log transformation
 ggsurvplot(km_fit, fun = "cloglog",
            ggtheme = theme_minimal(),
            title = "Complementary Log-Log Transformation")
@@ -492,67 +519,200 @@ summary_table
 
 #------------------------------------------------------------------------------
 # Fit survival models
+
+# Log-normal model
+lognormal_fit <- survreg(surv_object ~ age +  + year + surgery + transplant,
+                         data = heart_data, dist='lognormal')
+summary(lognormal_fit)
+
+with(heart_data, plot(age, duration, xlab='Age', ylab='Days', 
+                      xlim=c(0,65), ylim=c(.1, 10^5), log='y', type='n'))
+with(heart_data, points(age, duration, pch=c(2,4)[event+1], cex=.7))
+
+rr  <- residuals(lognormal_fit, type='matrix')
+plot(rr)
+
+pred <- predict(lognormal_fit, 
+                newdata = data.frame(
+                  age = 1:65, 
+                  year = mean(heart_data$year, na.rm = TRUE),
+                  surgery = 0,
+                  transplant = factor("0", levels = levels(heart_data$transplant))
+                ), 
+                type = 'quantile', 
+                p = c(.1, .5, .9))
+
+# Plot age vs. duration (survival time) on a log scale
+with(heart_data, plot(age, duration, xlab = 'Age', ylab = 'Days', 
+                      xlim = c(0, 65), ylim = c(.1, 10^5), log = 'y', type = 'n'))
+
+# Add points for actual data
+with(heart_data, points(age, duration, pch = c(2, 4)[event + 1], cex = .7))
+
+# Add predicted quantiles to the plot
+matlines(1:65, pred, lty = c(2, 1, 2), col = 1)
+
+#------------------------------------------------------------------------------
 # Weibull model
 weibull_fit <- survreg(surv_object ~ age + year + surgery + transplant,
                        data = heart_data, dist = "weibull")
 summary(weibull_fit)
 
-# Exponential distribution
-exp_fit <- survreg(surv_object ~ age + year + surgery + transplant,
-                   data = heart_data, dist = "exponential")
-summary(exp_fit)
+with(heart_data, plot(age, duration, xlab='Age', ylab='Days', 
+                      xlim=c(0,65), ylim=c(.1, 10^5), log='y', type='n'))
+with(heart_data, points(age, duration, pch=c(2,4)[event+1], cex=.7))
 
-# Log-logistic model
-loglog_fit <- survreg(surv_object ~ age + year + surgery + transplant,
-                      data = heart_data, dist = "loglogistic")
-summary(loglog_fit)
+rr  <- residuals(weibull_fit, type='matrix')
+plot(rr)
 
-# Binary Logistic Regression
-logistic_model <- glm(transplant ~ age + year + surgery, 
-                      data = heart_data, family = binomial)
-summary(logistic_model)
-exp(coef(logistic_model))
-                                                      
-#------------------------------------------------------------------------------
+pred <- predict(weibull_fit, 
+                newdata = data.frame(
+                  age = 1:65, 
+                  year = mean(heart_data$year, na.rm = TRUE),
+                  surgery = 0,
+                  transplant = factor("0", levels = levels(heart_data$transplant))
+                ), 
+                type = 'quantile', 
+                p = c(.1, .5, .9))
 
+# Plot age vs. duration (survival time) on a log scale
+with(heart_data, plot(age, duration, xlab = 'Age', ylab = 'Days', 
+                      xlim = c(0, 65), ylim = c(.1, 10^5), log = 'y', type = 'n'))
 
+# Add points for actual data
+with(heart_data, points(age, duration, pch = c(2, 4)[event + 1], cex = .7))
 
+# Add predicted quantiles to the plot
+matlines(1:65, pred, lty = c(2, 1, 2), col = 1)
 
-# Predictions
-fit <- survreg(Surv(time,status) ~ age + I(age^2), data=stanford2, 
-               dist='lognormal') 
-with(stanford2, plot(age, time, xlab='Age', ylab='Days', 
-                     xlim=c(0,65), ylim=c(.1, 10^5), log='y', type='n'))
-with(stanford2, points(age, time, pch=c(2,4)[status+1], cex=.7))
-pred <- predict(fit, newdata=list(age=1:65), type='quantile', 
-                p=c(.1, .5, .9)) 
-matlines(1:65, pred, lty=c(2,1,2), col=1) 
-
-# Predicted Weibull survival curve for heart transplant subject with
-#  average age of 48.
-lfit <- survreg(Surv(time, status) ~ age + I(age^2), data=stanford2)
 pct <- 1:98/100   # The 100th percentile of predicted survival is at +infinity
-ptime <- predict(lfit, newdata=data.frame(age=48), type='quantile',
+ptime <- predict(weibull_fit,
+              newdata = data.frame(age = 48,
+                year = mean(heart_data$year,na.rm = TRUE),surgery = 0,
+                transplant = factor("0",levels = levels(heart_data$transplant))
+), type='quantile',
                  p=pct, se=TRUE)
 matplot(cbind(ptime$fit, ptime$fit + 2*ptime$se.fit,
               ptime$fit - 2*ptime$se.fit)/30.5, 1-pct,
         xlab="Months", ylab="Survival", type='l', lty=c(1,2,2), col=1)
 
 
-# Fit an exponential model: the two fits are the same
-survreg(Surv(time, status) ~ age + I(age^2), data=stanford2, dist='weibull',
-        scale=1)
-survreg(Surv(time, status) ~ age + I(age^2), data=stanford2,
-        dist="exponential")
+#------------------------------------------------------------------------------
+# Exponential distribution
+exp_fit <- survreg(surv_object ~ age + year + surgery + transplant,
+                   data = heart_data, dist = "exponential")
+summary(exp_fit)
 
-# A model with different baseline survival shapes for two groups, i.e.,
-#   two different scale parameters
-survreg(Surv(time, status) ~ age + I(age^2), data=stanford2)
+with(heart_data, plot(age, duration, xlab='Age', ylab='Days', 
+                      xlim=c(0,65), ylim=c(.1, 10^5), log='y', type='n'))
+with(heart_data, points(age, duration, pch=c(2,4)[event+1], cex=.7))
 
-fit <- survreg(Surv(time, status) ~ age + I(age^2), data=stanford2)
-summary(fit)   # age and sex are both important
+rr  <- residuals(exp_fit, type='matrix')
+plot(rr)
 
-rr  <- residuals(fit, type='matrix')
+pred <- predict(exp_fit, 
+                newdata = data.frame(
+                  age = 1:65, 
+                  year = mean(heart_data$year, na.rm = TRUE),
+                  surgery = 0,
+                  transplant = factor("0", levels = levels(heart_data$transplant))
+                ), 
+                type = 'quantile', 
+                p = c(.1, .5, .9))
+
+# Plot age vs. duration (survival time) on a log scale
+with(heart_data, plot(age, duration, xlab = 'Age', ylab = 'Days', 
+                      xlim = c(0, 65), ylim = c(.1, 10^5), log = 'y', type = 'n'))
+
+# Add points for actual data
+with(heart_data, points(age, duration, pch = c(2, 4)[event + 1], cex = .7))
+
+# Add predicted quantiles to the plot
+matlines(1:65, pred, lty = c(2, 1, 2), col = 1)
+
+#------------------------------------------------------------------------------
+# Log-logistic model
+loglog_fit <- survreg(surv_object ~ age + year + surgery + transplant,
+                      data = heart_data, dist = "loglogistic")
+summary(loglog_fit)
+with(heart_data, plot(age, duration, xlab='Age', ylab='Days', 
+                      xlim=c(0,65), ylim=c(.1, 10^5), log='y', type='n'))
+with(heart_data, points(age, duration, pch=c(2,4)[event+1], cex=.7))
+
+rr  <- residuals(loglog_fit, type='matrix')
+plot(rr)
+
+pred <- predict(loglog_fit, 
+                newdata = data.frame(
+                  age = 1:65, 
+                  year = mean(heart_data$year, na.rm = TRUE),
+                  surgery = 0,
+                  transplant = factor("0", levels = levels(heart_data$transplant))
+                ), 
+                type = 'quantile', 
+                p = c(.1, .5, .9))
+
+# Plot age vs. duration (survival time) on a log scale
+with(heart_data, plot(age, duration, xlab = 'Age', ylab = 'Days', 
+                      xlim = c(0, 65), ylim = c(.1, 10^5), log = 'y', type = 'n'))
+
+# Add points for actual data
+with(heart_data, points(age, duration, pch = c(2, 4)[event + 1], cex = .7))
+
+# Add predicted quantiles to the plot
+matlines(1:65, pred, lty = c(2, 1, 2), col = 1)
+
+#------------------------------------------------------------------------------
+# Binary Logistic Regression
+
+# Predict probabilities of transplant for ages 1 to 65
+heart_data$surgery <- as.factor(heart_data$surgery)
+
+logistic_fit <- glm(transplant ~ age + year + surgery,
+                    data = heart_data, family = binomial)
+
+summary(logistic_fit)
+exp(coef(logistic_fit))
+with(heart_data, plot(age, duration, xlab='Age', ylab='Days', 
+                      xlim=c(0,65), ylim=c(.1, 10^5), log='y', type='n'))
+with(heart_data, points(age, duration, pch=c(2,4)[event+1], cex=.7))
+
+rr  <- residuals(logistic_fit, type='deviance')
+plot(rr, main = "Deviance Residuals", ylab = "Residuals", xlab = "Index")
+abline(h = 0, col = "red", lwd = 2)
+
+# Predict probabilities of transplant for ages 1 to 65
+pred <- predict(logistic_fit, 
+                newdata = data.frame(
+                  age = 1:65, 
+                  year = mean(heart_data$year, na.rm = TRUE),
+                  surgery = factor("0", levels = levels(heart_data$surgery))
+                ), 
+                type = 'response')
+
+# Plot age vs. duration (survival time) on a log scale
+with(heart_data, plot(age, duration, xlab = 'Age', ylab = 'Days', 
+                      xlim = c(0, 65), ylim = c(.1, 10^5), log = 'y', type = 'n'))
+
+# Add points for actual data
+with(heart_data, points(age, duration, pch = c(2, 4)[event + 1], cex = .7))
+
+# Add predicted probabilities to the plot
+lines(1:65, pred, lty = 1, col = 1)
+
+
+# Check for Multicollinearity
+vif(logistic_fit)
+
+#------------------------------------------------------------------------------
+
+
+                     
+#------------------------------------------------------------------------------
+# miscellaneous code
+
+#------------------------------------------------------------------------------
+
 
 ### To reliagn code for our data set
 # sum(rr[,1]) - with(mgus2, sum(log(futime[death==1]))) # loglik
@@ -597,11 +757,11 @@ rr  <- residuals(fit, type='matrix')
 # and 1.
 jasa$subject <- 1:nrow(jasa) #we need an identifier variable
 tdata <- with(jasa, data.frame(subject = subject,
-futime= pmax(.5, fu.date - accept.dt),
-txtime= ifelse(tx.date== fu.date,
-               (tx.date -accept.dt) -.5,
-               (tx.date - accept.dt)),
-fustat = fustat
+                               futime= pmax(.5, fu.date - accept.dt),
+                               txtime= ifelse(tx.date== fu.date,
+                                              (tx.date -accept.dt) -.5,
+                                              (tx.date - accept.dt)),
+                               fustat = fustat
 ))
 
 xdata <- tmerge(jasa, tdata, id=subject,
@@ -657,4 +817,3 @@ coxph(Surv(tstart, tstop, death) ~ age*trt + surgery + year,
 # leading edge of the first follow-up interval for the subject.
 # The other 67 transplants were strictly within the (0, last follow up) interval
 # of each subject.
-
