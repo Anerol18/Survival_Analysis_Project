@@ -1,0 +1,288 @@
+---
+title: "Survival Analysis"
+author: "Amit Agarwal, Lorena Romeo, Nikolai Len, Quentin Camilleri"
+output:
+  html_document:
+    df_print: paged
+  word_document: default
+  pdf_document: null
+geometry: left=0.5in,right=0.5in,top=0.5in,bottom=0.5in
+---
+
+Data set:  Survival of patients awaiting transplant in the Jasa heart data of the survival package.
+
+# Objective:
+Assess the effect on survival of transplantation, treating the patient 
+population as homogeneous, while in the influence of a number of covariates 
+was investigated through pairwise correlations and explore techniques to see 
+the simultaneous effect of several covariates and see for what values of these 
+covariates, if any, transplantation or surgery is likely to prolong survival.
+
+# Load Libraries
+```{r, warning = FALSE, message = FALSE}
+invisible(lapply(c("dplyr", "tidyr", "ggplot2", "magrittr", "lubridate", "BSDA",
+        "tidyverse","broom", "xtable", "webr", "gtsummary","modelsummary", 
+        "epiDisplay", "mgcv", "survival", "ggfortify", "gridExtra", "survminer", 
+        "epiR", "swimplot", "muhaz", "asaur", "maxLik", "survivalROC", "plyr", 
+        "glmnet", "tidycmprsk", "mstate", "cmprsk", "timeROC", "survAUC", 
+        "tidycmprsk","openxlsx","VSURF", "Hmisc","pec","riskRegression","car"),
+        library, character.only = TRUE))
+```
+
+# Datasets
+Three dataset are available.
+1. jasa, the original data with 103 observations
+2. heart (the main data set) with 172 observations
+3. stanford2 (Stanford Heart Transplant data in a different format) with 184
+observations (ignored as the number of subjects are not the same).
+jasa, jasa1, heart, all have 103 subjects while stanford2 has 184 subjects.
+id and subject are the same.
+actual_age = accept.dt - birth.dt
+futime = fu.date - accept.dt
+wait.time = tx.date - accept.dt
+stop = fu.date - accept.dt + 1 = end of followup - acceptance into program + 1
+wait.time = tx.date - accept.dt + 1 = transplant date - acceptance into program + 1
+(stop - start) time between the events.
+event = fustat = death of patient
+
+We use jasa data, that is the most complete, and extract relevant columns.
+```{r}
+# Load the datasets
+jasa_data <- jasa
+colnames(jasa_data)[colnames(jasa_data) == "age"] <- "actual_age"
+jasa_data <- cbind(id = 1:103, jasa_data)
+jasa_data$age <- jasa_data$actual_age - 48
+jasa_data$stop <- as.numeric(jasa_data$fu.date - jasa_data$accept.dt + 1)
+jasa_data$age_group <- cut(jasa_data$actual_age, breaks = seq(0, 80, 10),
+                      labels = c("0-10", "10-20", "20-30", "30-40", "40-50",
+                                 "50-60", "60-70", "70-80"))
+jasa_data$duration_e_1 <- as.numeric(jasa_data$fu.date - jasa_data$accept.dt) / 365.25
+
+```
+
+```{r}
+# Check for censoring in the dataset
+jasa_data$censored <- ifelse(jasa_data$fustat == 0, TRUE, FALSE)
+print(table(jasa_data$censored))
+```
+75 observations are not censored, i.e. death has occurred within the end of the 
+study. 28 subjects are censored, i.e. the event has not occurred by the end of 
+the study period.
+
+```{r}
+data_uncensored <- jasa_data %>% filter(fustat == 1)
+jasa_data$event <- ifelse(jasa_data$censored, 0, 1)
+
+# Removing specified redundant or useless covariates 
+jasa_data <- dplyr::select(jasa_data, -fustat, -mismatch, -hla.a2, -mscore, -reject)
+#str(jasa_data) #commented out to reduce pages
+#'data.frame':	103 obs. of  16 variables:
+#id, birth.dt, accept.dt, tx.date, fu.date, surgery, actual_age, futime, wait.time, transplant, 
+#age, stop, age_group, duration_e_1, censored, event  
+```
+
+```{r}
+surv_object <- Surv(time = jasa_data$stop, event = jasa_data$event)
+```
+
+# Modelling: Survival and Hazard Curves
+Survival: without considering grouping or stratification based on other variables
+
+```{r}
+# Kaplan-Meier estimator
+km_fit <- survfit(surv_object ~ 1,data=jasa_data)
+km_summary <- summary(km_fit)
+print(paste("survival probabilities: ", min(km_summary$surv)))
+print(paste("survival times: ", max(km_summary$time)))
+```
+We can see that over time, the probability of survival steadily declines, 
+in fact we see that after 1387 days of study (~3.8 years) only 15.2% of 
+the individuals are expected to survive beyond this.
+
+```{r}
+ggsurvplot(km_fit, conf.int = TRUE, risk.table=TRUE, ggtheme = theme_minimal(), 
+      title = "Kaplan-Meier Survival Curve with Censoring", censor.shape = '|', 
+      censor.size = 4)
+```
+
+The survival plot confirms that the probability of survival decreases over time. 
+Initially, the survival probability drops sharply and then continues to decline 
+at a slower rate as time progresses.
+
+By the end of the observation period, the survival probability is quite low, 
+indicating that most participants either experienced the event or were censored.
+
+## Survival: Grouping and Stratification modelling
+
+### Kaplan-Meier estimator stratified by transplant status
+
+```{r}
+km_fit_transplant <- survfit(surv_object ~ transplant, data = jasa_data)
+#summary(km_fit_transplant) # commented out to reduce the pages
+ggsurvplot(km_fit_transplant, conf.int = TRUE, ggtheme = theme_minimal(),
+           title = "Survival Curve by Transplant Status with Censoring", 
+           censor.shape = '|', censor.size = 4)
+```
+By the end of the study only 19% of individuals who received a transplant were 
+still alive compared to only 6.5% of those who did not receive a transplant. 
+
+The survival curve for transplanted patients declines more gradually, indicating 
+that they experienced better longevity compared to those who did not receive a 
+transplant.
+
+### Kaplan-Meier estimator stratified by surgery
+```{r}
+km_fit_surgery <- survfit(surv_object ~ surgery, data = jasa_data)
+#summary(km_fit_surgery) #commented out to reduce the pages
+ggsurvplot(km_fit_surgery, conf.int = TRUE, ggtheme = theme_minimal(), 
+           title = "Survival Curve by Surgery Status with Censoring",
+           censor.shape = '|', censor.size = 4)
+```
+Stratifying by surgery status reveals that by the end of the study, approximately 
+13% of individuals who did not undergo surgery were still alive, compared to 
+~31% of those who had surgery. 
+
+Additionally, the plot shows that the survival curve for patients who had surgery 
+declines more gradually and maintains a higher survival rate over time. 
+This analysis suggests that surgery positively impacts patient survival.
+
+## Hazard: based on risk groups
+
+### Cumulative hazard function using Nelson-Aalen estimator by age-group
+```{r}
+na_fit_age <- survfit(Surv(stop, event) ~ age_group, 
+                      data = jasa_data, type = "fleming-harrington")
+
+#summary(na_fit_age) # commented out to reduce the pages
+summary(na_fit_age)$table # See results for breakdown by age groups
+```
+In the above summary we note that the age-group 50-60 has the highest risk of 
+experiencing the event, in fact the survival rate is only ~3% during the 
+study period.
+While the age-group 20-30 has the lowest risk, with a survival rate of ~65%.
+
+```{r}
+ggsurvplot(na_fit_age, fun = "cumhaz", ggtheme = theme_minimal(),
+           title = "Cumulative Hazard Function")
+```
+
+The plot shows that Age group 50-60 (purple) exhibits the highest risk. 
+Age group 20-30 (green) has the lowest cumulative hazard even if we do not have 
+complete data on the long run.
+The cumulative hazard increases over time for most age groups, but at different
+rates. This suggests that the risk of the event increases as time progresses, 
+but it is not uniform across age groups. Therefore we conclude that the hazard 
+risk is likely to be impacted by the age of the patient.
+
+# Tests to compare Survival distribution between groups
+
+### Stratified Log-rank test on transplant+surgery
+```{r}
+stratified_logrank <- survdiff(surv_object ~ transplant + strata(surgery), 
+                               data = jasa_data)
+print(paste("Log-rank test for transplant + surgery : ", stratified_logrank))
+```
+
+The chi-square [5] is quite high, therefore suggesting a stronger difference 
+in survival between the groups.
+The p-value, indicator [6], associated to the chi-square test statistic is very 
+small, indicating that the observed differences in survival between the groups 
+are highly statistically significant. This suggests strong evidence against the 
+null hypothesis of no difference in survival.
+
+### Log-rank test on transplant vs. no transplant
+
+```{r}
+logrank_test_transplant <- survdiff(surv_object ~ transplant, data = jasa_data)
+print(paste("Log-rank test for transplant: ", logrank_test_transplant))
+```
+
+The small p-value indicates that the transplant has a highly significant impact 
+on survival. Thus, receiving a transplant affects survival times.
+The high chi-square value (33.24) further supports the significant effect.
+
+### Log-rank test on surgery vs. no surgery
+```{r}
+logrank_test_surgery <- survdiff(surv_object ~ surgery, data = jasa_data)
+print(paste("Log-rank test for surgery: ",logrank_test_surgery))
+```
+The chi-square statistic (4.443) and the p-value (0.035) suggest that there is a 
+statistically significant difference between the survival curves of the two 
+groups surgery and not surgery.
+The low p-value indicates that the difference in survival between surgery and 
+non-surgery groups is significant, but less significant than the transplant group.
+
+### Log-rank test on age_groups
+```{r}
+logrank_test_age <- survdiff(surv_object ~ age_group, data = jasa_data)
+print(paste("Log-rank test for age groups: ",logrank_test_age))
+```
+
+The chi-square statistic (12.996) and the p-value (0.043) suggest statistically 
+significant difference between the survival curves of the age-groups.
+The low p-value indicates that the difference in survival between the age-groups 
+is significant, but less significant than the transplant group.
+
+Our conclusion is that all groups are significantly impacting the survival rate 
+but the transplant is the most impactful.
+
+### Cox proportional hazards model 
+To understand how various covariates influence survival time 
+```{r, message = FALSE}
+cox_model <- coxph(surv_object ~ age_group+surgery+transplant,data = jasa_data)
+tbl_regression(cox_model)
+```
+Transplant is likely to highly impact positively the survival rate (due to 
+negative correlation) while age_groups 50-60 and 60-70 highly impact the risk of 
+the death event (due to positive correlation)
+
+```{r}
+par(mfrow = c(1, 2))
+plot(residuals(cox_model, type = "martingale"), main = "Martingale Residuals", 
+     ylab = "Residuals", xlab = "Index", col = "blue")
+plot(residuals(cox_model, type = "deviance"), main = "Deviance Residuals", 
+     ylab = "Residuals", xlab = "Index", col = "red")
+```
+The Martingale plot shows that the residuals are scattered fairly randomly 
+across the index range, with no obvious pattern or systematic structure.
+The deviance plot shows residuals that are symmetrically distributed around 0. 
+Residuals are randomly scattered across the plot without showing any systematic
+patterns or trends. 
+
+Conclusion: the residuals plot suggest a good fit of the model using covariates: 
+Transplant, Surgery and Age_Group.
+
+# Making predictions on new data based on age_group, surgery, and transplant.
+```{r}
+par(mfrow = c(2, 2))
+new_data1 <- data.frame(age_group = c("50-60"), surgery = c(0), transplant = c(0))
+new_data2 <- data.frame(age_group = c("50-60"), surgery = c(1), transplant = c(1))
+new_data3 <- data.frame(age_group = c("30-40"),surgery = c(1),transplant = c(0))
+new_data4 <- data.frame(age_group = c("30-40"),surgery = c(0),transplant = c(1))
+surv_fit_specific1 <- survfit(cox_model, newdata = new_data1)
+surv_fit_specific2 <- survfit(cox_model, newdata = new_data2)
+surv_fit_specific3 <- survfit(cox_model, newdata = new_data3)
+surv_fit_specific4 <- survfit(cox_model, newdata = new_data4)
+plot(surv_fit_specific1, xlab = "Time", ylab = "Survival Probability", conf.int = TRUE,
+     main = "50-60 Age Group w/o Surg or Transpl")
+axis(1, at = seq(0, 1500, by = 500)); grid();
+plot(surv_fit_specific2, xlab = "Time", ylab = "Survival Probability", conf.int = TRUE,
+     main = "50-60 Age Group with Surg and Transpl")
+axis(1, at = seq(0, 1500, by = 500)); grid();
+plot(surv_fit_specific3,xlab="Time",ylab="Survival Probability",conf.int=TRUE,
+     main = "30-40 Age Group with Surgery")
+axis(1, at = seq(0,1500, by = 500)); grid();
+plot(surv_fit_specific4,xlab="Time",ylab="Survival Probability",conf.int=TRUE,
+     main = "30-40 Age Group with Transplant")
+axis(1, at = seq(0,1500, by = 500)); grid()
+```
+# Conclusion
+From the prediction plots we can see that also for new data, transplant and 
+surgery are highly positively impacting the survival rate of the patients.
+Between surgery and transplant the results from the model are suggesting that 
+Transplant is the most influencing the survival rate.
+
+While transplant is highly correlated to the survival rate of the patient, the
+age is highly correlated to the hazard risk to encounter the event of death.
+This is visible from the prediction plots, that even with transplant or surgery 
+the survival rate is less high with increase of age.
